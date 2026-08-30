@@ -28,33 +28,44 @@ object AlarmPlayer {
         }
     }
 
-    fun start(context: Context) {
-        if (mediaPlayer != null) return // 既に鳴動中
+    // 戻り値: 音声再生に成功したか。失敗した場合はエラー内容も返す。
+    fun start(context: Context): Pair<Boolean, String?> {
+        if (mediaPlayer != null) return true to null // 既に鳴動中
 
+        var soundOk = true
+        var errorMsg: String? = null
         try {
             val alarmUri = RingtoneManager.getActualDefaultRingtoneUri(
                 context, RingtoneManager.TYPE_ALARM
             ) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                setDataSource(context, alarmUri)
-                isLooping = true
-                prepare()
-                start()
+            if (alarmUri == null) {
+                soundOk = false
+                errorMsg = "端末にアラーム音/通知音が設定されていません"
+            } else {
+                mediaPlayer = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    setDataSource(context, alarmUri)
+                    isLooping = true
+                    prepare()
+                    start()
+                }
             }
         } catch (e: Exception) {
-            // 再生に失敗しても監視自体は続行
+            soundOk = false
+            errorMsg = "${e.javaClass.simpleName}: ${e.message}"
         }
 
         vibrating = true
         this.appContext = context.applicationContext
         handler.post(vibrateLoop)
+
+        return soundOk to errorMsg
     }
 
     private var appContext: Context? = null

@@ -168,7 +168,9 @@ class MonitorService : Service() {
         try {
             val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
             if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                // CLEAR_TOPは付けない: 付けるとFamily Linkの画面履歴がリセットされ、
+                // 毎回トップ画面に戻ってしまい住所詳細画面が表示されなくなるため。
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launchIntent)
             }
         } catch (e: Exception) {
@@ -236,8 +238,12 @@ class MonitorService : Service() {
             .addOnSuccessListener { visionText ->
                 val text = visionText.text
                 if (keyword.isNotBlank() && text.contains(keyword, ignoreCase = true)) {
-                    AlarmPlayer.start(this)
-                    lastResultText = "検知しました: $keyword を含む表示を確認"
+                    val (soundOk, soundError) = AlarmPlayer.start(this)
+                    lastResultText = if (soundOk) {
+                        "検知しました: $keyword を含む表示を確認(音・バイブ作動中)"
+                    } else {
+                        "検知しました: $keyword を含む表示を確認(バイブのみ作動中。音声再生エラー: $soundError)"
+                    }
                     updateNotification(lastResultText)
                 } else {
                     // デバッグ用: 何を読み取ったか常に通知に出す(通知を長押し/展開すると全文見えます)
