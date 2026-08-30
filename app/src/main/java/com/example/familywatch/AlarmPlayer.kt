@@ -28,7 +28,8 @@ object AlarmPlayer {
         }
     }
 
-    // 戻り値: 音声再生に成功したか。失敗した場合はエラー内容も返す。
+    // 戻り値: 音声再生の"開始指示"に成功したか。失敗した場合はエラー内容も返す。
+    // 注意: prepareAsync()を使うため、実際に再生が始まるのは少し後(非同期)。
     fun start(context: Context): Pair<Boolean, String?> {
         if (mediaPlayer != null) return true to null // 既に鳴動中
 
@@ -52,8 +53,17 @@ object AlarmPlayer {
                     )
                     setDataSource(context, alarmUri)
                     isLooping = true
-                    prepare()
-                    start()
+                    setOnPreparedListener { mp -> mp.start() }
+                    setOnErrorListener { _, what, extra ->
+                        // 非同期再生中のエラー。握りつぶさずログに残す。
+                        android.util.Log.e("FamilyWatch", "MediaPlayer error what=$what extra=$extra")
+                        true
+                    }
+                    // prepare()(同期・ブロッキング)ではなくprepareAsync()を使う。
+                    // 同期版はメインスレッドを止めるリスクがあり、
+                    // 監視タイマーやカウントダウン表示まで巻き込んで
+                    // フリーズしたように見える不具合の原因になり得るため。
+                    prepareAsync()
                 }
             }
         } catch (e: Exception) {
@@ -95,7 +105,8 @@ object AlarmPlayer {
     fun stop(context: Context) {
         mediaPlayer?.let {
             try { it.stop() } catch (_: Exception) {}
-            it.release()
+            try { it.reset() } catch (_: Exception) {}
+            try { it.release() } catch (_: Exception) {}
         }
         mediaPlayer = null
 
