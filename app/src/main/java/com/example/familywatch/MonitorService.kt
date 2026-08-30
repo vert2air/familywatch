@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
-import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
@@ -14,7 +13,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.util.DisplayMetrics
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -35,6 +33,12 @@ class MonitorService : Service() {
         private const val CHANNEL_ID = "familywatch_channel"
         private const val ALARM_CHANNEL_ID = "familywatch_alarm_channel"
         private const val NOTIF_ID = 1
+
+        // MainActivityへ状態を知らせるブロードキャスト
+        const val ACTION_STATUS = "com.example.familywatch.ACTION_STATUS"
+        const val EXTRA_RUNNING = "running"
+        const val EXTRA_SECONDS_LEFT = "seconds_left"
+        const val EXTRA_LAST_RESULT = "last_result"
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -45,12 +49,25 @@ class MonitorService : Service() {
     private var targetPackage: String = ""
     private var intervalMs: Long = 15 * 60 * 1000L
     private var running = false
+    private var nextTriggerAtMillis: Long = 0L
+    private var lastResultText: String = "まだ実行していません"
 
     private val loopRunnable = object : Runnable {
         override fun run() {
             if (!running) return
             captureOnce()
+            nextTriggerAtMillis = System.currentTimeMillis() + intervalMs
             handler.postDelayed(this, intervalMs)
+        }
+    }
+
+    // 1秒ごとにアプリ画面へ状態(次回までの秒数など)を知らせる
+    private val statusTicker = object : Runnable {
+        override fun run() {
+            broadcastStatus()
+            if (running) {
+                handler.postDelayed(this, 1000)
+            }
         }
     }
 
@@ -65,15 +82,19 @@ class MonitorService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_STOP_ALARM -> {
+                // アラーム/バイブのみ止める。監視自体には触れない。
                 AlarmPlayer.stop(this)
                 return START_STICKY
             }
             ACTION_TEST_CAPTURE -> {
                 if (mediaProjection != null) {
-                    updateNotification("テストキャプチャ実行中...")
+                    lastResultText = "テストキャプチャ実行中..."
+                    updateNotification(lastResultText)
+                    broadcastStatus()
                     captureOnce()
                 } else {
                     updateNotification("先に「監視を開始」してください")
+                    broadcastStatus()
                 }
                 return START_STICKY
             }
@@ -95,20 +116,17 @@ class MonitorService : Service() {
                             stopMonitoring()
                         }
                     }, handler)
-                    setupVirtualDisplay()
                     running = true
+                    lastResultText = "まだ実行していません"
                     // 初回は少し待ってから開始
+                    nextTriggerAtMillis = System.currentTimeMillis() + 3000
                     handler.postDelayed(loopRunnable, 3000)
+                    handler.post(statusTicker)
                 }
                 return START_STICKY
             }
         }
         return START_STICKY
-    }
-
-    private fun setupVirtualDisplay() {
-        // 実際のVirtualDisplay作成はensureImageReader()内で行う
-        // (初回captureOnce()呼び出し時に画面サイズが確定してから作成するため)
     }
 
     private fun ensureImageReader(): ImageReader {
@@ -170,11 +188,15 @@ class MonitorService : Service() {
                             runOcr(bitmap)
                         }
                     } catch (e: Exception) {
-                        updateNotification("キャプチャ中にエラー: ${e.message}")
+                        lastResultText = "キャプチャ中にエラー: ${e.message}"
+                        updateNotification(lastResultText)
+                        broadcastStatus()
                     }
                 }, 500)
             } catch (e: Exception) {
-                updateNotification("画面設定中にエラー: ${e.message}")
+                lastResultText = "画面設定中にエラー: ${e.message}"
+                updateNotification(lastResultText)
+                broadcastStatus()
             }
         }, 2000)
     }
@@ -187,7 +209,8 @@ class MonitorService : Service() {
                 val text = visionText.text
                 if (keyword.isNotBlank() && text.contains(keyword, ignoreCase = true)) {
                     AlarmPlayer.start(this)
-                    updateNotification("検知しました: $keyword を含む表示を確認")
+                    lastResultText = "検知しました: $keyword を含む表示を確認"
+                    updateNotification(lastResultText)
                 } else {
                     // デバッグ用: 何を読み取ったか常に通知に出す(通知を長押し/展開すると全文見えます)
                     val preview = if (text.isBlank()) {
@@ -195,11 +218,15 @@ class MonitorService : Service() {
                     } else {
                         text.replace("\n", " ").take(120)
                     }
-                    updateNotification("前回読み取り結果: $preview")
+                    lastResultText = "前回読み取り結果: $preview"
+                    updateNotification(lastResultText)
                 }
+                broadcastStatus()
             }
             .addOnFailureListener { e ->
-                updateNotification("OCR失敗: ${e.message}")
+                lastResultText = "OCR失敗: ${e.message}"
+                updateNotification(lastResultText)
+                broadcastStatus()
             }
             .addOnCompleteListener {
                 bitmap.recycle()
@@ -209,6 +236,7 @@ class MonitorService : Service() {
     private fun stopMonitoring() {
         running = false
         handler.removeCallbacks(loopRunnable)
+        handler.removeCallbacks(statusTicker)
         virtualDisplay?.release()
         virtualDisplay = null
         imageReader?.close()
@@ -216,11 +244,27 @@ class MonitorService : Service() {
         mediaProjection?.stop()
         mediaProjection = null
         stopForeground(STOP_FOREGROUND_REMOVE)
+        broadcastStatus()
     }
 
     override fun onDestroy() {
         stopMonitoring()
         super.onDestroy()
+    }
+
+    private fun broadcastStatus() {
+        val secondsLeft = if (running) {
+            ((nextTriggerAtMillis - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
+        } else {
+            0L
+        }
+        val intent = Intent(ACTION_STATUS).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_RUNNING, running)
+            putExtra(EXTRA_SECONDS_LEFT, secondsLeft.toInt())
+            putExtra(EXTRA_LAST_RESULT, lastResultText)
+        }
+        sendBroadcast(intent)
     }
 
     private fun createChannels() {

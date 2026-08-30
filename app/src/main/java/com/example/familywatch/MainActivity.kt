@@ -1,7 +1,9 @@
 package com.example.familywatch
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -12,7 +14,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -21,6 +23,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editPackage: EditText
     private lateinit var editInterval: EditText
     private lateinit var statusText: TextView
+
+    private val statusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            intent ?: return
+            val running = intent.getBooleanExtra(MonitorService.EXTRA_RUNNING, false)
+            val secondsLeft = intent.getIntExtra(MonitorService.EXTRA_SECONDS_LEFT, 0)
+            val lastResult = intent.getStringExtra(MonitorService.EXTRA_LAST_RESULT) ?: ""
+            statusText.text = buildString {
+                append(if (running) "状態: 監視中\n" else "状態: 停止中\n")
+                if (running) {
+                    append("次回チェックまで: 約${secondsLeft}秒\n")
+                }
+                append("前回の結果: $lastResult")
+            }
+        }
+    }
 
     // MediaProjectionの許可ダイアログの結果を受け取る
     private val screenCaptureLauncher =
@@ -43,7 +61,6 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     startService(serviceIntent)
                 }
-                statusText.text = "監視中..."
             } else {
                 Toast.makeText(this, "画面キャプチャの許可が必要です", Toast.LENGTH_LONG).show()
             }
@@ -86,7 +103,6 @@ class MainActivity : AppCompatActivity() {
                 action = MonitorService.ACTION_STOP
             }
             startService(serviceIntent)
-            statusText.text = "停止しました"
         }
 
         findViewById<Button>(R.id.btnStopAlarm).setOnClickListener {
@@ -101,11 +117,27 @@ class MainActivity : AppCompatActivity() {
                 action = MonitorService.ACTION_TEST_CAPTURE
             }
             startService(serviceIntent)
-            Toast.makeText(
-                this,
-                "テスト実行しました。数秒後に通知欄を確認してください",
-                Toast.LENGTH_LONG
-            ).show()
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(MonitorService.ACTION_STATUS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.registerReceiver(
+                this, statusReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(statusReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        try {
+            unregisterReceiver(statusReceiver)
+        } catch (_: Exception) {
         }
     }
 
