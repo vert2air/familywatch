@@ -26,6 +26,7 @@ class MonitorService : Service() {
         const val ACTION_START = "action_start"
         const val ACTION_STOP = "action_stop"
         const val ACTION_STOP_ALARM = "action_stop_alarm"
+        const val ACTION_TEST_CAPTURE = "action_test_capture"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_KEYWORD = "keyword"
@@ -65,6 +66,15 @@ class MonitorService : Service() {
             }
             ACTION_STOP_ALARM -> {
                 AlarmPlayer.stop(this)
+                return START_STICKY
+            }
+            ACTION_TEST_CAPTURE -> {
+                if (mediaProjection != null) {
+                    updateNotification("テストキャプチャ実行中...")
+                    captureOnce()
+                } else {
+                    updateNotification("先に「監視を開始」してください")
+                }
                 return START_STICKY
             }
             ACTION_START -> {
@@ -178,7 +188,18 @@ class MonitorService : Service() {
                 if (keyword.isNotBlank() && text.contains(keyword, ignoreCase = true)) {
                     AlarmPlayer.start(this)
                     updateNotification("検知しました: $keyword を含む表示を確認")
+                } else {
+                    // デバッグ用: 何を読み取ったか常に通知に出す(通知を長押し/展開すると全文見えます)
+                    val preview = if (text.isBlank()) {
+                        "(文字を認識できませんでした)"
+                    } else {
+                        text.replace("\n", " ").take(120)
+                    }
+                    updateNotification("前回読み取り結果: $preview")
                 }
+            }
+            .addOnFailureListener { e ->
+                updateNotification("OCR失敗: ${e.message}")
             }
             .addOnCompleteListener {
                 bitmap.recycle()
@@ -220,6 +241,7 @@ class MonitorService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("FamilyWatch")
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .build()

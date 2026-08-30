@@ -95,6 +95,18 @@ class MainActivity : AppCompatActivity() {
             }
             startService(serviceIntent)
         }
+
+        findViewById<Button>(R.id.btnTestCapture).setOnClickListener {
+            val serviceIntent = Intent(this, MonitorService::class.java).apply {
+                action = MonitorService.ACTION_TEST_CAPTURE
+            }
+            startService(serviceIntent)
+            Toast.makeText(
+                this,
+                "テスト実行しました。数秒後に通知欄を確認してください",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun saveConfig() {
