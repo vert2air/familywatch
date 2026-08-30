@@ -105,15 +105,20 @@ class MonitorService : Service() {
         val dm = resources.displayMetrics
         val width = dm.widthPixels
         val height = dm.heightPixels
+
+        imageReader?.close() // 前回分を解放してからリークを防ぐ
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         imageReader = reader
 
         val projection = mediaProjection ?: return reader
         virtualDisplay?.release()
+        // 注意: VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR はシステム権限が必要なフラグで
+        // 一般アプリが使うとSecurityExceptionでクラッシュする。
+        // MediaProjectionでの画面キャプチャには VIRTUAL_DISPLAY_FLAG_PUBLIC を使う。
         virtualDisplay = projection.createVirtualDisplay(
             "FamilyWatchCapture",
             width, height, dm.densityDpi,
-            android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
             reader.surface, null, handler
         )
         return reader
@@ -134,25 +139,33 @@ class MonitorService : Service() {
 
         // 2. 描画待ち後にキャプチャ
         handler.postDelayed({
-            val reader = ensureImageReader()
-            handler.postDelayed({
-                val image = reader.acquireLatestImage()
-                if (image != null) {
-                    val planes = image.planes
-                    val buffer = planes[0].buffer
-                    val pixelStride = planes[0].pixelStride
-                    val rowStride = planes[0].rowStride
-                    val rowPadding = rowStride - pixelStride * image.width
-                    val bitmap = Bitmap.createBitmap(
-                        image.width + rowPadding / pixelStride,
-                        image.height,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    bitmap.copyPixelsFromBuffer(buffer)
-                    image.close()
-                    runOcr(bitmap)
-                }
-            }, 500)
+            try {
+                val reader = ensureImageReader()
+                handler.postDelayed({
+                    try {
+                        val image = reader.acquireLatestImage()
+                        if (image != null) {
+                            val planes = image.planes
+                            val buffer = planes[0].buffer
+                            val pixelStride = planes[0].pixelStride
+                            val rowStride = planes[0].rowStride
+                            val rowPadding = rowStride - pixelStride * image.width
+                            val bitmap = Bitmap.createBitmap(
+                                image.width + rowPadding / pixelStride,
+                                image.height,
+                                Bitmap.Config.ARGB_8888
+                            )
+                            bitmap.copyPixelsFromBuffer(buffer)
+                            image.close()
+                            runOcr(bitmap)
+                        }
+                    } catch (e: Exception) {
+                        updateNotification("キャプチャ中にエラー: ${e.message}")
+                    }
+                }, 500)
+            } catch (e: Exception) {
+                updateNotification("画面設定中にエラー: ${e.message}")
+            }
         }, 2000)
     }
 
