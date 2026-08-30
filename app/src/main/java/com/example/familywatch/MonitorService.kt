@@ -18,7 +18,7 @@ import android.util.DisplayMetrics
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 
 class MonitorService : Service() {
 
@@ -180,7 +180,7 @@ class MonitorService : Service() {
     }
 
     private fun runOcr(bitmap: Bitmap) {
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         recognizer.process(inputImage)
             .addOnSuccessListener { visionText ->
@@ -227,7 +227,7 @@ class MonitorService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "監視ステータス", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "監視ステータス", NotificationManager.IMPORTANCE_DEFAULT)
             )
             nm.createNotificationChannel(
                 NotificationChannel(
