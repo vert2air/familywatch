@@ -51,11 +51,12 @@ class MonitorService : Service() {
     private var running = false
     private var nextTriggerAtMillis: Long = 0L
     private var lastResultText: String = "まだ実行していません"
+    private var isCapturing = false
 
     private val loopRunnable = object : Runnable {
         override fun run() {
             if (!running) return
-            captureOnce()
+            captureOnce(isManualTest = false)
             nextTriggerAtMillis = System.currentTimeMillis() + intervalMs
             handler.postDelayed(this, intervalMs)
         }
@@ -88,14 +89,18 @@ class MonitorService : Service() {
             }
             ACTION_TEST_CAPTURE -> {
                 if (mediaProjection != null) {
-                    lastResultText = "テストキャプチャ実行中..."
-                    updateNotification(lastResultText)
-                    broadcastStatus()
-                    captureOnce()
+                    if (isCapturing) {
+                        lastResultText = "前回のキャプチャがまだ進行中です。少し待ってから再度お試しください"
+                        updateNotification(lastResultText)
+                    } else {
+                        lastResultText = "テストキャプチャ実行中..."
+                        updateNotification(lastResultText)
+                        captureOnce(isManualTest = true)
+                    }
                 } else {
                     updateNotification("先に「監視を開始」してください")
-                    broadcastStatus()
                 }
+                broadcastStatus()
                 return START_STICKY
             }
             ACTION_START -> {
@@ -152,7 +157,13 @@ class MonitorService : Service() {
         return reader
     }
 
-    private fun captureOnce() {
+    private fun captureOnce(isManualTest: Boolean) {
+        if (isCapturing) {
+            // 前回のキャプチャがまだ進行中(監視周期とテスト実行が重なった等)。今回はスキップ。
+            return
+        }
+        isCapturing = true
+
         // 1. Family Linkを前面に呼び出す
         try {
             val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
@@ -162,6 +173,7 @@ class MonitorService : Service() {
             }
         } catch (e: Exception) {
             // パッケージが見つからない等。次周期に持ち越す
+            isCapturing = false
             return
         }
 
@@ -185,18 +197,30 @@ class MonitorService : Service() {
                             )
                             bitmap.copyPixelsFromBuffer(buffer)
                             image.close()
-                            runOcr(bitmap)
+                            runOcr(bitmap) // runOcr完了時にisCapturingをfalseに戻す
+                        } else {
+                            // 画像が取得できなかった(タイミング等)。エラーではなく空振りとして記録。
+                            lastResultText = if (isManualTest) {
+                                "画面のキャプチャに失敗しました。もう一度「今すぐ1回テスト実行」を押してください"
+                            } else {
+                                "画面のキャプチャに失敗しました。次回の自動チェック(約${intervalMs / 60000}分後)で再試行します"
+                            }
+                            updateNotification(lastResultText)
+                            broadcastStatus()
+                            isCapturing = false
                         }
                     } catch (e: Exception) {
                         lastResultText = "キャプチャ中にエラー: ${e.message}"
                         updateNotification(lastResultText)
                         broadcastStatus()
+                        isCapturing = false
                     }
                 }, 500)
             } catch (e: Exception) {
                 lastResultText = "画面設定中にエラー: ${e.message}"
                 updateNotification(lastResultText)
                 broadcastStatus()
+                isCapturing = false
             }
         }, 2000)
     }
@@ -230,11 +254,13 @@ class MonitorService : Service() {
             }
             .addOnCompleteListener {
                 bitmap.recycle()
+                isCapturing = false
             }
     }
 
     private fun stopMonitoring() {
         running = false
+        isCapturing = false
         handler.removeCallbacks(loopRunnable)
         handler.removeCallbacks(statusTicker)
         virtualDisplay?.release()
