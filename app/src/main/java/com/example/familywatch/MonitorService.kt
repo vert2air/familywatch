@@ -210,17 +210,21 @@ class MonitorService : Service() {
                             isCapturing = false
                         }
                     } catch (e: Exception) {
-                        lastResultText = "キャプチャ中にエラー: ${e.message}"
+                        // 画面キャプチャの許可が無効化された可能性が高い(例: システムに打ち切られた)。
+                        // 中途半端な状態を残さず、監視を安全に停止してユーザーに再開始を促す。
+                        isCapturing = false
+                        stopMonitoring()
+                        lastResultText = "画面キャプチャの権限が無効になりました。「監視を開始」を押し直してください"
                         updateNotification(lastResultText)
                         broadcastStatus()
-                        isCapturing = false
                     }
                 }, 500)
             } catch (e: Exception) {
-                lastResultText = "画面設定中にエラー: ${e.message}"
+                isCapturing = false
+                stopMonitoring()
+                lastResultText = "画面キャプチャの権限が無効になりました。「監視を開始」を押し直してください"
                 updateNotification(lastResultText)
                 broadcastStatus()
-                isCapturing = false
             }
         }, 2000)
     }
