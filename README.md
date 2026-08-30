@@ -44,6 +44,26 @@ Android Studioを開かずに、GitHub上で自動ビルドしてAPKをダウン
 これで、コードを書いたりAndroid Studioをインストールしたりせずに
 APKファイルが手に入ります。
 
+## スマホから直接開けるダウンロードURL(推奨)
+「Artifacts」はログインが必要で期限も短いため、スマホのブラウザで
+そのまま開ける固定URLが欲しい場合は「Releases」機能を使います。
+今回のワークフロー更新により、pushするたびに `latest` という名前の
+リリースが自動更新され、そこにAPKが添付されるようになっています。
+
+ダウンロードURLは以下の形式になります(あなたのユーザー名とリポジトリ名に
+置き換えてください):
+
+```
+https://github.com/<あなたのGitHubユーザー名>/familywatch/releases/download/latest/FamilyWatch.apk
+```
+
+このURLをスマホのブラウザで開けばAPKのダウンロードが始まります
+(リポジトリがPublicの場合はログイン不要、Privateの場合はブラウザで
+GitHubにログイン済みである必要があります)。
+
+初回はまだ`latest`リリースが存在しないので、一度ワークフローを
+実行してから(pushするか、Actionsタブから手動実行)URLを開いてください。
+
 ## (参考)Android Studioで自分でビルドする場合
 1. Android Studioでこのフォルダを「Open」で開く(新規プロジェクト作成は不要、
    既にGradleプロジェクトとして必要なファイルが揃っています)
