@@ -19,7 +19,7 @@ import androidx.core.content.ContextCompat
 class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: SharedPreferences
-    private lateinit var editKeyword: EditText
+    private lateinit var editCondition: EditText
     private lateinit var editPackage: EditText
     private lateinit var editInterval: EditText
     private lateinit var statusText: TextView
@@ -49,7 +49,7 @@ class MainActivity : AppCompatActivity() {
                     action = MonitorService.ACTION_START
                     putExtra(MonitorService.EXTRA_RESULT_CODE, result.resultCode)
                     putExtra(MonitorService.EXTRA_RESULT_DATA, result.data)
-                    putExtra(MonitorService.EXTRA_KEYWORD, editKeyword.text.toString())
+                    putExtra(MonitorService.EXTRA_CONDITION, editCondition.text.toString())
                     putExtra(MonitorService.EXTRA_PACKAGE, editPackage.text.toString())
                     putExtra(
                         MonitorService.EXTRA_INTERVAL_MIN,
@@ -75,20 +75,25 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences("familywatch_prefs", Context.MODE_PRIVATE)
 
-        editKeyword = findViewById(R.id.editKeyword)
+        editCondition = findViewById(R.id.editCondition)
         editPackage = findViewById(R.id.editPackage)
         editInterval = findViewById(R.id.editInterval)
         statusText = findViewById(R.id.statusText)
 
-        editKeyword.setText(prefs.getString("keyword", ""))
+        editCondition.setText(prefs.getString("condition", ""))
         editPackage.setText(
             prefs.getString("package", "com.google.android.apps.kids.familylink")
         )
         editInterval.setText(prefs.getInt("interval", 15).toString())
 
         findViewById<Button>(R.id.btnStart).setOnClickListener {
-            if (editKeyword.text.isBlank()) {
-                Toast.makeText(this, "判定キーワード(地名など)を入力してください", Toast.LENGTH_SHORT).show()
+            if (editCondition.text.isBlank()) {
+                Toast.makeText(this, "判定条件式を入力してください", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val error = ConditionMatcher.validate(editCondition.text.toString())
+            if (error != null) {
+                Toast.makeText(this, "条件式にエラーがあります: $error", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -143,7 +148,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveConfig() {
         prefs.edit()
-            .putString("keyword", editKeyword.text.toString())
+            .putString("condition", editCondition.text.toString())
             .putString("package", editPackage.text.toString())
             .putInt("interval", editInterval.text.toString().toIntOrNull() ?: 15)
             .apply()

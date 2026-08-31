@@ -21,14 +21,18 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="判定キーワード(住所・地名の一部)"
+        android:text="判定条件式(&amp;&amp;=かつ, ||=または, !=でない, 文字列は&quot;で囲む)"
         android:textSize="14sp" />
 
     <EditText
-        android:id="@+id/editKeyword"
+        android:id="@+id/editCondition"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="例: 〇〇駅" />
+        android:minLines="3"
+        android:maxLines="6"
+        android:gravity="top"
+        android:inputType="textMultiLine"
+        android:hint="&quot;柏市&quot; &amp;&amp; !&quot;新柏&quot;" />
 
     <TextView
         android:layout_width="wrap_content"

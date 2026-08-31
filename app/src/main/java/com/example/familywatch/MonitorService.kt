@@ -27,7 +27,7 @@ class MonitorService : Service() {
         const val ACTION_TEST_CAPTURE = "action_test_capture"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
-        const val EXTRA_KEYWORD = "keyword"
+        const val EXTRA_CONDITION = "condition"
         const val EXTRA_PACKAGE = "package"
         const val EXTRA_INTERVAL_MIN = "interval_min"
         private const val CHANNEL_ID = "familywatch_channel"
@@ -45,7 +45,7 @@ class MonitorService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-    private var keyword: String = ""
+    private var conditionExpr: String = ""
     private var targetPackage: String = ""
     private var intervalMs: Long = 15 * 60 * 1000L
     private var running = false
@@ -106,7 +106,7 @@ class MonitorService : Service() {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 val resultData: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
-                keyword = intent.getStringExtra(EXTRA_KEYWORD) ?: ""
+                conditionExpr = intent.getStringExtra(EXTRA_CONDITION) ?: ""
                 targetPackage = intent.getStringExtra(EXTRA_PACKAGE) ?: ""
                 val intervalMin = intent.getIntExtra(EXTRA_INTERVAL_MIN, 15)
                 intervalMs = intervalMin * 60 * 1000L
@@ -237,12 +237,22 @@ class MonitorService : Service() {
         recognizer.process(inputImage)
             .addOnSuccessListener { visionText ->
                 val text = visionText.text
-                if (keyword.isNotBlank() && text.contains(keyword, ignoreCase = true)) {
+                val matched = try {
+                    conditionExpr.isNotBlank() &&
+                        ConditionMatcher.evaluate(ConditionMatcher.parse(conditionExpr), text)
+                } catch (e: Exception) {
+                    lastResultText = "条件式のエラー: ${e.message}"
+                    updateNotification(lastResultText)
+                    broadcastStatus()
+                    return@addOnSuccessListener
+                }
+
+                if (matched) {
                     val (soundOk, soundError) = AlarmPlayer.start(this)
                     lastResultText = if (soundOk) {
-                        "検知しました: $keyword を含む表示を確認(音・バイブ作動中)"
+                        "条件に一致しました(音・バイブ作動中)"
                     } else {
-                        "検知しました: $keyword を含む表示を確認(バイブのみ作動中。音声再生エラー: $soundError)"
+                        "条件に一致しました(バイブのみ作動中。音声再生エラー: $soundError)"
                     }
                     updateNotification(lastResultText)
                 } else {
