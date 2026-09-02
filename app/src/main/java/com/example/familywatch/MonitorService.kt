@@ -121,12 +121,24 @@ class MonitorService : Service() {
                             stopMonitoring()
                         }
                     }, handler)
-                    running = true
-                    lastResultText = "まだ実行していません"
-                    // 初回は少し待ってから開始
-                    nextTriggerAtMillis = System.currentTimeMillis() + 3000
-                    handler.postDelayed(loopRunnable, 3000)
-                    handler.post(statusTicker)
+
+                    // 注意(重要): Android 14以降、1つのMediaProjection許可につき
+                    // VirtualDisplayを作成できるのは1回だけ、という制限がある。
+                    // 毎回作り直すと2回目以降で例外(権限無効化のように見える)が出るため、
+                    // ここで一度だけ作成し、以後のキャプチャは使い回す。
+                    try {
+                        setupCapture()
+                        running = true
+                        lastResultText = "まだ実行していません"
+                        // 初回は少し待ってから開始
+                        nextTriggerAtMillis = System.currentTimeMillis() + 3000
+                        handler.postDelayed(loopRunnable, 3000)
+                        handler.post(statusTicker)
+                    } catch (e: Exception) {
+                        lastResultText = "画面キャプチャの初期設定に失敗しました: ${e.message}"
+                        updateNotification(lastResultText)
+                        stopMonitoring()
+                    }
                 }
                 return START_STICKY
             }
@@ -134,27 +146,26 @@ class MonitorService : Service() {
         return START_STICKY
     }
 
-    private fun ensureImageReader(): ImageReader {
+    /** VirtualDisplay/ImageReaderを一度だけ作成する。監視中は使い回す。 */
+    private fun setupCapture() {
         val dm = resources.displayMetrics
         val width = dm.widthPixels
         val height = dm.heightPixels
 
-        imageReader?.close() // 前回分を解放してからリークを防ぐ
+        imageReader?.close()
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         imageReader = reader
 
-        val projection = mediaProjection ?: return reader
+        val projection = mediaProjection ?: throw IllegalStateException("MediaProjectionが未設定です")
         virtualDisplay?.release()
-        // 注意: VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR はシステム権限が必要なフラグで
-        // 一般アプリが使うとSecurityExceptionでクラッシュする。
         // MediaProjectionでの画面キャプチャには VIRTUAL_DISPLAY_FLAG_PUBLIC を使う。
+        // (VIRTUAL_DISPLAY_FLAG_AUTO_MIRRORはシステム権限が必要でSecurityExceptionになる)
         virtualDisplay = projection.createVirtualDisplay(
             "FamilyWatchCapture",
             width, height, dm.densityDpi,
             android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
             reader.surface, null, handler
         )
-        return reader
     }
 
     private fun captureOnce(isManualTest: Boolean) {
@@ -179,49 +190,46 @@ class MonitorService : Service() {
             return
         }
 
-        // 2. 描画待ち後にキャプチャ
+        // 2. 描画待ち後にキャプチャ(VirtualDisplay/ImageReaderは開始時に作成済みのものを使い回す)
         handler.postDelayed({
             try {
-                val reader = ensureImageReader()
-                handler.postDelayed({
-                    try {
-                        val image = reader.acquireLatestImage()
-                        if (image != null) {
-                            val planes = image.planes
-                            val buffer = planes[0].buffer
-                            val pixelStride = planes[0].pixelStride
-                            val rowStride = planes[0].rowStride
-                            val rowPadding = rowStride - pixelStride * image.width
-                            val bitmap = Bitmap.createBitmap(
-                                image.width + rowPadding / pixelStride,
-                                image.height,
-                                Bitmap.Config.ARGB_8888
-                            )
-                            bitmap.copyPixelsFromBuffer(buffer)
-                            image.close()
-                            runOcr(bitmap) // runOcr完了時にisCapturingをfalseに戻す
-                        } else {
-                            // 画像が取得できなかった(タイミング等)。エラーではなく空振りとして記録。
-                            lastResultText = if (isManualTest) {
-                                "画面のキャプチャに失敗しました。もう一度「今すぐ1回テスト実行」を押してください"
-                            } else {
-                                "画面のキャプチャに失敗しました。次回の自動チェック(約${intervalMs / 60000}分後)で再試行します"
-                            }
-                            updateNotification(lastResultText)
-                            broadcastStatus()
-                            isCapturing = false
-                        }
-                    } catch (e: Exception) {
-                        // 画面キャプチャの許可が無効化された可能性が高い(例: システムに打ち切られた)。
-                        // 中途半端な状態を残さず、監視を安全に停止してユーザーに再開始を促す。
-                        isCapturing = false
-                        stopMonitoring()
-                        lastResultText = "画面キャプチャの権限が無効になりました。「監視を開始」を押し直してください"
-                        updateNotification(lastResultText)
-                        broadcastStatus()
+                val reader = imageReader
+                if (reader == null) {
+                    lastResultText = "画面キャプチャの準備ができていません。「監視を開始」を押し直してください"
+                    updateNotification(lastResultText)
+                    broadcastStatus()
+                    isCapturing = false
+                    return@postDelayed
+                }
+                val image = reader.acquireLatestImage()
+                if (image != null) {
+                    val planes = image.planes
+                    val buffer = planes[0].buffer
+                    val pixelStride = planes[0].pixelStride
+                    val rowStride = planes[0].rowStride
+                    val rowPadding = rowStride - pixelStride * image.width
+                    val bitmap = Bitmap.createBitmap(
+                        image.width + rowPadding / pixelStride,
+                        image.height,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    bitmap.copyPixelsFromBuffer(buffer)
+                    image.close()
+                    runOcr(bitmap) // runOcr完了時にisCapturingをfalseに戻す
+                } else {
+                    // 画像が取得できなかった(タイミング等)。エラーではなく空振りとして記録。
+                    lastResultText = if (isManualTest) {
+                        "画面のキャプチャに失敗しました。もう一度「今すぐ1回テスト実行」を押してください"
+                    } else {
+                        "画面のキャプチャに失敗しました。次回の自動チェック(約${intervalMs / 60000}分後)で再試行します"
                     }
-                }, 500)
+                    updateNotification(lastResultText)
+                    broadcastStatus()
+                    isCapturing = false
+                }
             } catch (e: Exception) {
+                // 画面キャプチャの許可が無効化された可能性が高い(例: システムに打ち切られた)。
+                // 中途半端な状態を残さず、監視を安全に停止してユーザーに再開始を促す。
                 isCapturing = false
                 stopMonitoring()
                 lastResultText = "画面キャプチャの権限が無効になりました。「監視を開始」を押し直してください"
