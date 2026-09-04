@@ -376,6 +376,9 @@ class MonitorService : Service() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
+            // 内容更新のたびに通知音("チャリーン")が鳴らないようにする。
+            // 同じ通知IDへの最初の表示時だけ音が鳴り、以降の更新は無音になる。
+            .setOnlyAlertOnce(true)
             .build()
     }
 
