@@ -4,21 +4,24 @@ package com.example.familywatch
  * OCR結果テキストに対する条件式を扱う。
  *
  * 書式:
- *   "文字列"          そのテキストが含まれていればtrue
- *   A && B            AとBの両方を満たす
- *   A || B            AかBのどちらかを満たす
- *   ! A               Aを満たさない
- *   ( ... )           グループ化(優先順位の変更)
+ *   "文字列"           そのテキストが含まれていればtrue(単純な部分一致)
+ *   reg("正規表現")     正規表現にマッチすればtrue
+ *   A && B             AとBの両方を満たす
+ *   A || B             AかBのどちらかを満たす
+ *   ! A                Aを満たさない
+ *   ( ... )            グループ化(優先順位の変更)
  *
  * 優先順位: !  >  &&  >  ||  (括弧で自由に変更可)
  *
  * 例:
  *   "柏市" && ("位置情報を更新しています" || "更新: 1分前" || "更新: 2分前") && (!"新柏")
+ *   "柏市" && reg("[1-9]分前")
  */
 object ConditionMatcher {
 
     sealed class Node {
         data class Contains(val text: String) : Node()
+        data class RegexMatch(val compiled: Regex) : Node()
         data class Not(val node: Node) : Node()
         data class And(val nodes: List<Node>) : Node()
         data class Or(val nodes: List<Node>) : Node()
@@ -31,6 +34,7 @@ object ConditionMatcher {
         object Or : Token()
         object Not : Token()
         data class Str(val value: String) : Token()
+        data class Ident(val name: String) : Token()
     }
 
     private class Tokenizer(private val src: String) {
@@ -48,6 +52,7 @@ object ConditionMatcher {
                     c == '!' -> { tokens.add(Token.Not); pos++ }
                     c == '&' && peek(1) == '&' -> { tokens.add(Token.And); pos += 2 }
                     c == '|' && peek(1) == '|' -> { tokens.add(Token.Or); pos += 2 }
+                    c.isLetter() -> tokens.add(readIdent())
                     else -> throw IllegalArgumentException(
                         "予期しない文字「$c」があります(${pos + 1}文字目)。" +
                             "文字列は必ず \" で囲んでください。"
@@ -59,6 +64,15 @@ object ConditionMatcher {
 
         private fun peek(offset: Int): Char? =
             if (pos + offset < src.length) src[pos + offset] else null
+
+        private fun readIdent(): Token.Ident {
+            val sb = StringBuilder()
+            while (pos < src.length && (src[pos].isLetterOrDigit())) {
+                sb.append(src[pos])
+                pos++
+            }
+            return Token.Ident(sb.toString())
+        }
 
         private fun readString(): Token.Str {
             val start = pos
@@ -142,8 +156,35 @@ object ConditionMatcher {
                     consume()
                     Node.Contains(tok.value)
                 }
+                is Token.Ident -> {
+                    consume()
+                    if (tok.name != "reg") {
+                        throw IllegalArgumentException(
+                            "不明な関数「${tok.name}」です(使えるのは reg(\"...\") のみです)"
+                        )
+                    }
+                    if (peek() !is Token.LParen) {
+                        throw IllegalArgumentException("reg の後には ( が必要です。例: reg(\"[1-9]分前\")")
+                    }
+                    consume()
+                    val strTok = peek()
+                    if (strTok !is Token.Str) {
+                        throw IllegalArgumentException("reg(...) の中には \"正規表現\" を書いてください")
+                    }
+                    consume()
+                    if (peek() !is Token.RParen) {
+                        throw IllegalArgumentException("reg(...) の閉じ括弧「)」がありません")
+                    }
+                    consume()
+                    val compiled = try {
+                        Regex(strTok.value, RegexOption.IGNORE_CASE)
+                    } catch (e: Exception) {
+                        throw IllegalArgumentException("正規表現が不正です: ${e.message}")
+                    }
+                    Node.RegexMatch(compiled)
+                }
                 else -> throw IllegalArgumentException(
-                    "「\"文字列\"」か「(」が来るべき場所に別の記号があります"
+                    "「\"文字列\"」か「reg(...)」か「(」が来るべき場所に別の記号があります"
                 )
             }
         }
@@ -166,6 +207,7 @@ object ConditionMatcher {
 
     fun evaluate(node: Node, text: String): Boolean = when (node) {
         is Node.Contains -> text.contains(node.text, ignoreCase = true)
+        is Node.RegexMatch -> node.compiled.containsMatchIn(text)
         is Node.Not -> !evaluate(node.node, text)
         is Node.And -> node.nodes.all { evaluate(it, text) }
         is Node.Or -> node.nodes.any { evaluate(it, text) }

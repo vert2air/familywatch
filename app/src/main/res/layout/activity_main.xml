@@ -21,7 +21,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="判定条件式(&amp;&amp;=かつ, ||=または, !=でない, 文字列は&quot;で囲む)"
+        android:text="判定条件式(&amp;&amp;=かつ, ||=または, !=でない, &quot;文字列&quot;, reg(&quot;正規表現&quot;))"
         android:textSize="14sp" />
 
     <EditText
