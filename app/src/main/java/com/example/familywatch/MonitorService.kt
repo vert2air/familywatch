@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -29,7 +30,7 @@ class MonitorService : Service() {
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_CONDITION = "condition"
         const val EXTRA_PACKAGE = "package"
-        const val EXTRA_INTERVAL_MIN = "interval_min"
+        const val EXTRA_INTERVAL_SECONDS = "interval_seconds"
         private const val CHANNEL_ID = "familywatch_channel"
         private const val ALARM_CHANNEL_ID = "familywatch_alarm_channel"
         private const val NOTIF_ID = 1
@@ -47,11 +48,12 @@ class MonitorService : Service() {
     private var imageReader: ImageReader? = null
     private var conditionExpr: String = ""
     private var targetPackage: String = ""
-    private var intervalMs: Long = 15 * 60 * 1000L
+    private var intervalMs: Long = 60 * 1000L
     private var running = false
     private var nextTriggerAtMillis: Long = 0L
     private var lastResultText: String = "まだ実行していません"
     private var isCapturing = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val loopRunnable = object : Runnable {
         override fun run() {
@@ -108,10 +110,10 @@ class MonitorService : Service() {
                 val resultData: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
                 conditionExpr = intent.getStringExtra(EXTRA_CONDITION) ?: ""
                 targetPackage = intent.getStringExtra(EXTRA_PACKAGE) ?: ""
-                val intervalMin = intent.getIntExtra(EXTRA_INTERVAL_MIN, 15)
-                intervalMs = intervalMin * 60 * 1000L
+                val totalSeconds = intent.getIntExtra(EXTRA_INTERVAL_SECONDS, 60)
+                intervalMs = totalSeconds * 1000L
 
-                startForeground(NOTIF_ID, buildNotification("監視中: ${intervalMin}分間隔"))
+                startForeground(NOTIF_ID, buildNotification("監視中: ${formatDuration(intervalMs)}間隔"))
 
                 if (resultData != null) {
                     val mgr = getSystemService(MediaProjectionManager::class.java)
@@ -128,6 +130,7 @@ class MonitorService : Service() {
                     // ここで一度だけ作成し、以後のキャプチャは使い回す。
                     try {
                         setupCapture()
+                        acquireWakeLock()
                         running = true
                         lastResultText = "まだ実行していません"
                         // 初回は少し待ってから開始
@@ -144,6 +147,25 @@ class MonitorService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    /** 監視中はスクリーンセーバー/画面消灯を抑止する(画面が暗くなるとキャプチャできなくなるため)。 */
+    @Suppress("DEPRECATION")
+    private fun acquireWakeLock() {
+        releaseWakeLock()
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val wl = pm.newWakeLock(
+            PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+            "FamilyWatch::MonitoringWakeLock"
+        )
+        // 万が一解放し忘れても電池を消耗し続けないよう、上限(24時間)を設けておく。
+        wl.acquire(24 * 60 * 60 * 1000L)
+        wakeLock = wl
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
     }
 
     /** VirtualDisplay/ImageReaderを一度だけ作成する。監視中は使い回す。 */
@@ -221,7 +243,7 @@ class MonitorService : Service() {
                     lastResultText = if (isManualTest) {
                         "画面のキャプチャに失敗しました。もう一度「今すぐ1回テスト実行」を押してください"
                     } else {
-                        "画面のキャプチャに失敗しました。次回の自動チェック(約${intervalMs / 60000}分後)で再試行します"
+                        "画面のキャプチャに失敗しました。次回の自動チェック(約${formatDuration(intervalMs)}後)で再試行します"
                     }
                     updateNotification(lastResultText)
                     broadcastStatus()
@@ -291,6 +313,7 @@ class MonitorService : Service() {
         isCapturing = false
         handler.removeCallbacks(loopRunnable)
         handler.removeCallbacks(statusTicker)
+        releaseWakeLock()
         virtualDisplay?.release()
         virtualDisplay = null
         imageReader?.close()
@@ -304,6 +327,17 @@ class MonitorService : Service() {
     override fun onDestroy() {
         stopMonitoring()
         super.onDestroy()
+    }
+
+    private fun formatDuration(ms: Long): String {
+        val totalSec = ms / 1000
+        val m = totalSec / 60
+        val s = totalSec % 60
+        return when {
+            m > 0 && s > 0 -> "${m}分${s}秒"
+            m > 0 -> "${m}分"
+            else -> "${s}秒"
+        }
     }
 
     private fun broadcastStatus() {

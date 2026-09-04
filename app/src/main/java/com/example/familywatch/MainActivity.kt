@@ -21,7 +21,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private lateinit var editCondition: EditText
     private lateinit var editPackage: EditText
-    private lateinit var editInterval: EditText
+    private lateinit var editIntervalMin: EditText
+    private lateinit var editIntervalSec: EditText
     private lateinit var statusText: TextView
 
     private val statusReceiver = object : BroadcastReceiver() {
@@ -45,16 +46,14 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK && result.data != null) {
                 saveConfig()
+                val totalSeconds = currentIntervalSeconds()
                 val serviceIntent = Intent(this, MonitorService::class.java).apply {
                     action = MonitorService.ACTION_START
                     putExtra(MonitorService.EXTRA_RESULT_CODE, result.resultCode)
                     putExtra(MonitorService.EXTRA_RESULT_DATA, result.data)
                     putExtra(MonitorService.EXTRA_CONDITION, editCondition.text.toString())
                     putExtra(MonitorService.EXTRA_PACKAGE, editPackage.text.toString())
-                    putExtra(
-                        MonitorService.EXTRA_INTERVAL_MIN,
-                        editInterval.text.toString().toIntOrNull() ?: 15
-                    )
+                    putExtra(MonitorService.EXTRA_INTERVAL_SECONDS, totalSeconds)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
@@ -77,14 +76,17 @@ class MainActivity : AppCompatActivity() {
 
         editCondition = findViewById(R.id.editCondition)
         editPackage = findViewById(R.id.editPackage)
-        editInterval = findViewById(R.id.editInterval)
+        editIntervalMin = findViewById(R.id.editIntervalMin)
+        editIntervalSec = findViewById(R.id.editIntervalSec)
         statusText = findViewById(R.id.statusText)
 
         editCondition.setText(prefs.getString("condition", ""))
         editPackage.setText(
             prefs.getString("package", "com.google.android.apps.kids.familylink")
         )
-        editInterval.setText(prefs.getInt("interval", 15).toString())
+        // デフォルトは1分0秒
+        editIntervalMin.setText(prefs.getInt("interval_min", 1).toString())
+        editIntervalSec.setText(prefs.getInt("interval_sec", 0).toString())
 
         findViewById<Button>(R.id.btnStart).setOnClickListener {
             if (editCondition.text.isBlank()) {
@@ -94,6 +96,15 @@ class MainActivity : AppCompatActivity() {
             val error = ConditionMatcher.validate(editCondition.text.toString())
             if (error != null) {
                 Toast.makeText(this, "条件式にエラーがあります: $error", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            val sec = editIntervalSec.text.toString().toIntOrNull() ?: 0
+            if (sec % 10 != 0 || sec !in 0..50) {
+                Toast.makeText(this, "秒は10秒単位(0,10,20,30,40,50)で入力してください", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            if (currentIntervalSeconds() <= 0) {
+                Toast.makeText(this, "監視間隔は1秒以上にしてください", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -146,11 +157,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun currentIntervalSeconds(): Int {
+        val min = editIntervalMin.text.toString().toIntOrNull() ?: 1
+        val sec = editIntervalSec.text.toString().toIntOrNull() ?: 0
+        return min * 60 + sec
+    }
+
     private fun saveConfig() {
         prefs.edit()
             .putString("condition", editCondition.text.toString())
             .putString("package", editPackage.text.toString())
-            .putInt("interval", editInterval.text.toString().toIntOrNull() ?: 15)
+            .putInt("interval_min", editIntervalMin.text.toString().toIntOrNull() ?: 1)
+            .putInt("interval_sec", editIntervalSec.text.toString().toIntOrNull() ?: 0)
             .apply()
     }
 }
